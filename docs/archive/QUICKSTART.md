@@ -25,8 +25,8 @@ Prepare the **Sentence Laundry** API project (also known as Messy Talker) for te
 
 ```bash
 # Clone the sample repository and navigate to it
-git clone https://github.com/kjyyoung/sentence-laundry
-cd sentence-laundry
+git clone https://github.com/kjyyoung/crypto-price-oracle
+cd crypto-price-oracle
 
 # Activate virtual environment (Recommended for Python)
 python3 -m venv venv

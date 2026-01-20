@@ -29,8 +29,8 @@ openseal --version
 
 ```bash
 # 샘플 레포지토리 클론 및 이동
-git clone https://github.com/kjyyoung/sentence-laundry
-cd sentence-laundry
+git clone https://github.com/kjyyoung/crypto-price-oracle
+cd crypto-price-oracle
 
 # 가상 환경 활성화 (Python 프로젝트 권장 사항)
 # 환경에 따라 python 또는 python3를 사용하세요.
