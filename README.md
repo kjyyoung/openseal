@@ -1,5 +1,10 @@
 [🇰🇷 한국어 버전 (Korean Version)](./README_KR.md)
 
+> [!IMPORTANT]
+> **The OpenSeal repository has moved!**
+> You can find the latest updates, security patches, and official releases at our new home: [Gnomone/openseal](https://github.com/Gnomone/openseal).
+> This repository is now archived, and all future development will take place in the new location.
+
 # 🔐 OpenSeal: Create a 'Verifiable API' in 10 Seconds
 
 Verify that your service code is untampered and mathematically proven to your customers, without modifying a single line of your actual business logic.
