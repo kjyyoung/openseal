@@ -1,5 +1,10 @@
 [🇺🇸 English Version](./README.md)
 
+> [!IMPORTANT]
+> **OpenSeal 리포지토리가 이전되었습니다!**
+> 최신 업데이트, 보안 패치 및 정식 릴리즈는 새로운 홈인 [Gnomone/openseal](https://github.com/Gnomone/openseal)에서 확인하실 수 있습니다. 
+> 이 리포지토리는 기록 보존을 위해 유지되며, 모든 기술 지원은 신규 리포지토리에서 진행됩니다.
+
 # 🔐 OpenSeal: 10초 만에 '검증 가능한 API' 만들기
 
 내 서비스 안에서 내 API 서비스를 단 한 줄도 수정하지 않고, 코드가 변조되지 않았음을 고객에게 수학적으로 증명하세요.
