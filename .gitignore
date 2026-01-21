@@ -1,40 +1,69 @@
 # ============================================
-# Layer D: Protected Core (NEVER COMMIT)
+# OpenSeal Whitelist Gitignore (Harden Mode)
+# v1.0.0-alpha.1 Updated
 # ============================================
+
+# 1. Ignore everything by default
+/*
+!/.gitignore
+!/.gitignore.*
+!/README.md
+!/README_KR.md
+!/CHANGELOG.md
+!/LICENSE
+!/install.sh
+!/openseal-linux
+!/openseal.json          # Allow for HighStation Truth Hash extraction
+!/Cargo.toml
+!/Cargo.lock
+!/scripts/
+!/crates/
+!/docs/
+
+# 2. Refine folders: Ignore everything inside them first
+/scripts/*
+/crates/*
+/docs/*
+
+# 3. Allow only public/official files in folders
+!/scripts/push-private.sh
+!/scripts/push-public.sh
+
+!/docs/public/
+!/docs/public/**
+
+!/crates/openseal-cli/
+!/crates/openseal-cli/**
+
+!/crates/openseal-runtime/
+!/crates/openseal-runtime/**
+
+!/crates/openseal-core/
+!/crates/openseal-core/**
+
+# 4. Explicitly BLOCK sensitive folders (⚠️ CRITICAL SECURITY)
+# openseal-secret contains b_G function - NEVER publish
 crates/openseal-secret/
 docs/internal/
-
-# ============================================
-# Sensitive Data & Credentials
-# ============================================
+docs/archive/
+.archive/
+.history.md
 .env*
 *.key
 *.pem
 *.secret
-.archive/
-.history.md
 
-# ============================================
-# Build Artifacts
-# ============================================
+# 5. v1.0.0 Specific: Block development artifacts
+dist_opensealed/
+openseal_runtime_*/
+.openseal_mutable
+
+# 6. Build Artifacts
 target/
 dist/
 build/
 **/*.rs.bk
-
-# ============================================
-# Temporary & Test Files
-# ============================================
-tmp*/
-test_env_*/
 *.log
-*.swp
-*.tmp
-verify_openseal.sh
-
-# ============================================
-# IDE & System
-# ============================================
-.vscode/
-.idea/
 .DS_Store
+Cargo.lock         # Allow in root, but block in subcrates
+node_modules/

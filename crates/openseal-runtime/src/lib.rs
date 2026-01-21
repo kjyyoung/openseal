@@ -13,6 +13,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use ed25519_dalek::{SigningKey, Signer};
+use anyhow::{anyhow, Context};
+use std::io::{self, Write};
+use std::process::Command;
 
 #[derive(Clone)]
 struct AppState {
@@ -21,16 +24,58 @@ struct AppState {
     signing_key: SigningKey,
 }
 
-pub async fn run_proxy_server(port: u16, target_url: String, project_root: PathBuf) -> anyhow::Result<()> {
-    println!("🔐 OpenSeal Runtime v0.2.0 Starting...");
-    println!("   Target App: {}", target_url);
-    println!("   Project Root: {:?}", project_root);
-
+pub async fn prepare_runtime(
+    project_root: &PathBuf,
+    dependency_hint: Option<String>,
+) -> anyhow::Result<ProjectIdentity> {
+    println!("🔐 OpenSeal Runtime v{} Initializing...", env!("CARGO_PKG_VERSION"));
+    
     // 1. Static Commitment: Compute A-hash at startup
-    println!("   Scanning project identity...");
-    let identity = compute_project_identity(&project_root)?;
-    println!("   ✅ A-hash (Root): {}", identity.root_hash.to_hex());
-    println!("   📄 Files Sealed: {}", identity.file_count);
+    let live_identity = compute_project_identity(&project_root)?;
+    
+    // 2. Load Expected Hash from openseal.json
+    let manifest_path = project_root.join("openseal.json");
+    if manifest_path.exists() {
+        let manifest_content = std::fs::read_to_string(&manifest_path)?;
+        let manifest: serde_json::Value = serde_json::from_str(&manifest_content)?;
+        
+        if let Some(expected_hash_array) = manifest["identity"]["root_hash"].as_array() {
+            let expected_hash_bytes: Vec<u8> = expected_hash_array
+                .iter()
+                .filter_map(|v| v.as_u64().map(|n| n as u8))
+                .collect();
+            
+            if live_identity.root_hash.as_bytes() != expected_hash_bytes.as_slice() {
+                eprintln!("\n🚨 ═══════════════════════════════════════════════════════════");
+                eprintln!("   CRITICAL: INTEGRITY VIOLATION DETECTED");
+                eprintln!("   ═══════════════════════════════════════════════════════════");
+                eprintln!("   The sealed bundle has been modified!");
+                eprintln!("   ");
+                eprintln!("   Expected Hash: {}", hex::encode(&expected_hash_bytes));
+                eprintln!("   Actual Hash:   {}", live_identity.root_hash.to_hex());
+                eprintln!("   ");
+                eprintln!("   This runtime will NOT start for security reasons.");
+                eprintln!("   Please rebuild with 'openseal build' to restore integrity.");
+                eprintln!("   ═══════════════════════════════════════════════════════════\n");
+                
+                return Err(anyhow!("Integrity violation detected - Runtime aborted"));
+            }
+            println!("   ✅ Integrity Verified!");
+        }
+    }
+
+    // 3. Dependency Management
+    handle_dependencies(project_root, dependency_hint).await?;
+    
+    Ok(live_identity)
+}
+
+pub async fn run_proxy_server(
+    port: u16, 
+    target_url: String, 
+    _project_root: PathBuf,
+    project_identity: ProjectIdentity,
+) -> anyhow::Result<()> {
 
     // Generate a strictly ephemeral signing key for this runtime session (Mandatory in v2.0)
     let mut csprng = OsRng;
@@ -42,21 +87,226 @@ pub async fn run_proxy_server(port: u16, target_url: String, project_root: PathB
 
     let state = Arc::new(AppState {
         target_url,
-        project_identity: identity,
+        project_identity,
         signing_key: key,
     });
 
     let app = Router::new()
+        .route("/.openseal/identity", any(identity_handler))
         .route("/*path", any(handler))
         .with_state(state);
 
     let addr = format!("0.0.0.0:{}", port);
     let listener = TcpListener::bind(&addr).await?;
     println!("🚀 OpenSeal Running on {}", addr);
+    println!("   Standard Identity Endpoint: http://{}/.openseal/identity", addr);
 
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+async fn handle_dependencies(
+    project_root: &std::path::Path,
+    dependency_hint: Option<String>,
+) -> anyhow::Result<()> {
+    // 1. Explicit dependency specification
+    if let Some(dep_dir) = dependency_hint {
+        let dep_path = std::path::Path::new(&dep_dir);
+        
+        // We check if the dependency source exists anywhere (could be absolute or relative to where openseal run was called)
+        if dep_path.is_dir() {
+            let src_abs = std::fs::canonicalize(dep_path).context(format!("Failed to resolve absolute path for {:?}", dep_path))?;
+            
+            // Destination is "node_modules" inside the runtime project_root (e.g. dist_opensealed/node_modules)
+            let dep_dest = project_root.join("node_modules");
+            
+            // If it's already there and is a symlink, we check if it points to the right place.
+            // If it's not there, we create it.
+            if !dep_dest.exists() && !dep_dest.is_symlink() {
+                println!("   🔗 Linking dependencies: {} -> {:?}", dep_dir, src_abs);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::symlink;
+                    symlink(&src_abs, &dep_dest).context("Failed to create dependency symlink")?;
+                }
+                #[cfg(windows)]
+                {
+                    use std::os::windows::fs::symlink_dir;
+                    symlink_dir(&src_abs, &dep_dest).context("Failed to create dependency symlink")?;
+                }
+            } else {
+                println!("   ✅ Using existing dependencies: {}/", dep_dir);
+            }
+            return Ok(());
+        } else {
+            eprintln!("   ⚠️  Specified dependency '{}' not found or is not a directory. Retrying with auto-detection...", dep_dir);
+        }
+    }
+
+    // 2. Auto-detection
+    let dep_info = detect_dependencies(project_root)?;
+
+    match dep_info {
+        Some(DepInfo::NodeJs { exists, .. }) if exists => {
+            println!("   ✅ Node.js dependencies found");
+            Ok(())
+        }
+        Some(DepInfo::Python { exists, .. }) if exists => {
+            println!("   ✅ Python dependencies found");
+            Ok(())
+        }
+        Some(dep_info) => {
+            // Case 3: Project detected but dependencies missing - Ask user or auto-install in daemon mode
+            prompt_and_install(project_root, dep_info).await
+        }
+        None => {
+            // println!("   ℹ️  No standard dependency patterns detected");
+            Ok(())
+        }
+    }
+}
+
+enum DepInfo {
+    NodeJs { exists: bool, _package_json: std::path::PathBuf },
+    Python { exists: bool, _requirements: std::path::PathBuf },
+}
+
+fn detect_dependencies(project_root: &std::path::Path) -> anyhow::Result<Option<DepInfo>> {
+    // Node.js
+    let package_json = project_root.join("package.json");
+    if package_json.exists() {
+        let node_modules = project_root.join("node_modules");
+        let exists = node_modules.exists() && !node_modules.is_symlink();
+        return Ok(Some(DepInfo::NodeJs { exists, _package_json: package_json }));
+    }
+
+    // Python
+    let requirements = project_root.join("requirements.txt");
+    if requirements.exists() {
+        // venv or .venv
+        let venv = project_root.join("venv");
+        let dot_venv = project_root.join(".venv");
+        let exists = (venv.exists() && !venv.is_symlink()) || (dot_venv.exists() && !dot_venv.is_symlink());
+        return Ok(Some(DepInfo::Python { exists, _requirements: requirements }));
+    }
+
+    Ok(None)
+}
+
+async fn prompt_and_install(
+    project_root: &std::path::Path,
+    dep_info: DepInfo,
+) -> anyhow::Result<()> {
+    // Check if we are in interactive mode or daemon
+    let is_atty = atty::is(atty::Stream::Stdin);
+    let is_non_interactive = std::env::var("OPENSEAL_NON_INTERACTIVE").unwrap_or_default() == "1";
+    let is_daemon = std::env::var("OPENSEAL_DAEMON").unwrap_or_default() == "1";
+
+    match dep_info {
+        DepInfo::NodeJs { .. } => {
+            if !is_atty || is_non_interactive || is_daemon {
+                 println!("   📦 Automatically installing Node.js dependencies (Non-interactive mode)...");
+                 return install_npm_dependencies(project_root);
+            }
+
+            println!("\n📦 Node.js project detected, but 'node_modules/' is missing or is just a symlink.");
+            print!("   Would you like to install dependencies now? (Y/n): ");
+            io::stdout().flush()?;
+            
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            
+            if input.trim().is_empty() || input.trim().to_lowercase().starts_with('y') {
+                install_npm_dependencies(project_root)
+            } else {
+                eprintln!("   ⚠️  Skipping installation. The application may fail to start.");
+                Ok(())
+            }
+        }
+        DepInfo::Python { .. } => {
+            if !is_atty || is_non_interactive || is_daemon {
+                 println!("   📦 Automatically installing Python dependencies (Non-interactive mode)...");
+                 return install_pip_dependencies(project_root);
+            }
+
+            println!("\n📦 Python project detected, but 'venv/' is missing or is just a symlink.");
+            print!("   Would you like to install dependencies now? (Y/n): ");
+            io::stdout().flush()?;
+            
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            
+            if input.trim().is_empty() || input.trim().to_lowercase().starts_with('y') {
+                install_pip_dependencies(project_root)
+            } else {
+                eprintln!("   ⚠️  Skipping installation. The application may fail to start.");
+                Ok(())
+            }
+        }
+    }
+}
+
+fn install_npm_dependencies(project_root: &std::path::Path) -> anyhow::Result<()> {
+    // Check if npm exists
+    if Command::new("npm").arg("--version").stdout(std::process::Stdio::null()).status().is_err() {
+        return Err(anyhow!("'npm' command not found. Please ensure Node.js is installed."));
+    }
+
+    println!("   ⚙️  Running 'npm install' in {:?}...", project_root);
+    let status = Command::new("npm")
+        .arg("install")
+        .arg("--no-fund")
+        .arg("--no-audit")
+        .current_dir(project_root)
+        .status()?;
+
+    if status.success() {
+        println!("   ✅ Node.js dependencies installed successfully.");
+        Ok(())
+    } else {
+        Err(anyhow!("'npm install' failed with status: {}", status))
+    }
+}
+
+fn install_pip_dependencies(project_root: &std::path::Path) -> anyhow::Result<()> {
+    // Check if pip/python exists
+    if Command::new("pip").arg("--version").stdout(std::process::Stdio::null()).status().is_err() {
+        return Err(anyhow!("'pip' command not found. Please ensure Python is installed."));
+    }
+
+    println!("   ⚙️  Running 'pip install -r requirements.txt' in {:?}...", project_root);
+    let status = Command::new("pip")
+        .arg("install")
+        .arg("-r")
+        .arg("requirements.txt")
+        .current_dir(project_root)
+        .status()?;
+
+    if status.success() {
+        println!("   ✅ Python dependencies installed successfully.");
+        Ok(())
+    } else {
+        Err(anyhow!("'pip install' failed with status: {}", status))
+    }
+}
+
+/// Handler for /.openseal/identity endpoint
+/// Returns the runtime's identity (A-hash) without requiring the internal app to be running
+async fn identity_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    // Simple identity response without requiring Wax challenge
+    // This is a public, read-only endpoint for discovery
+    let identity_response = serde_json::json!({
+        "service": "OpenSeal Runtime Identity",
+        "version": "0.2.0",
+        "identity": {
+            "a_hash": state.project_identity.root_hash.to_hex().to_string(),
+            "file_count": state.project_identity.file_count,
+        },
+        "status": "sealed"
+    });
+
+    (StatusCode::OK, axum::Json(identity_response)).into_response()
 }
 
 async fn handler(State(state): State<Arc<AppState>>, req: Request<Body>) -> impl IntoResponse {

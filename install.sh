@@ -2,10 +2,9 @@
 set -e
 
 # Configuration
-REPO="kjyyoung/openseal"
-VERSION="v0.1.1" # Hardcoded for now, or fetch latest
+REPO="Gnomone/openseal"
 BINARY_NAME="openseal-linux"
-DOWNLOAD_URL="https://github.com/$REPO/releases/download/$VERSION/$BINARY_NAME"
+DOWNLOAD_URL="https://github.com/$REPO/releases/latest/download/$BINARY_NAME"
 
 echo "🔐 OpenSeal Installer"
 echo "   Target: $DOWNLOAD_URL"

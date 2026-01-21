@@ -1,4 +1,4 @@
-# 🛠️ OpenSeal: 사용법 및 안전 가이드
+# 🛠️ OpenSeal: 사용법 가이드
 
 OpenSeal 서비스의 설정, 실행 및 안전한 관리 방법을 다룹니다.
 
@@ -6,118 +6,192 @@ OpenSeal 서비스의 설정, 실행 및 안전한 관리 방법을 다룹니다
 
 ## 1. 5분 퀵스타트
 
-### 1단계: CLI 설치
+### 1단계: CLI 설치 (v0.2.63+)
 ```bash
-# 최신 바이너리를 다운로드하여 설치합니다.
-curl -L https://github.com/kjyyoung/openseal/releases/latest/download/install.sh | bash
+curl -L https://github.com/Gnomone/openseal/releases/latest/download/install.sh | bash
+hash -r
+openseal --version
 ```
 
 ### 2단계: 봉인 (Build)
 ```bash
-# 프로젝트 루트에서 실행하세요.
-# --output 옵션으로 결과물 폴더를 따로 지정하세요 ('dist_opensealed' 등) - 기존 dist 폴더 보호
-openseal build --exec "node app.js" --output dist_opensealed
+# 프로젝트 루트에서 실행
+openseal build --exec "npm run dev" --output dist_opensealed
 ```
 
-### 3단계: 실행 (봉인 활성화)
+> [!TIP]
+> **v0.2.63 자동화**: `--output`으로 지정한 경로는 자동으로 `.opensealignore`에 추가되어 Hash 재현성을 보장합니다.
+
+### 3단계: 실행
 ```bash
-# 원하는 포트 지정 (예: 3000)
-# OpenSeal이 내부 포트 충돌을 자동으로 해결합니다.
+# 일반 실행 (자동 의존성 탐지)
 openseal run --app dist_opensealed --port 3000
+
+# 명시적 의존성 지정 (권장)
+openseal run --app dist_opensealed --port 3000 --dependency node_modules
+
+# 백그라운드 (자동 설치 지원)
+openseal run --app dist_opensealed --port 3000 --daemon
 ```
+
+> [!TIP]
+> `--daemon` 플래그를 사용하면 SSH 연결이 끊겨도 서비스가 계속 실행됩니다.
 
 ---
 
-## 2. 언어별 퀵스타트 (Quickstart by Language)
+## 2. 언어별 퀵스타트
 
-OpenSeal은 검증된 소스 코드를 직접 실행(JIT)하는 것을 권장합니다. 각 환경에 맞는 복사-붙여넣기 명령어입니다.
+OpenSeal은 소스 코드를 직접 실행(JIT)하는 것을 권장합니다.
 
-### 🟢 Node.js (TypeScript)
-빌드된 `dist` 대신 **소스 코드 무결성**을 위해 `ts-node` 사용을 권장합니다.
+### 🟢 Node.js / TypeScript
 ```bash
-# 빌드
-openseal build --exec "npx ts-node src/index.ts" --output dist_opensealed
-
-# 실행
-cd dist_opensealed && npm install && cd ..
+openseal build --exec "npm run dev" --output dist_opensealed
 openseal run --app dist_opensealed --port 3000
 ```
+> 💡 **JIT 권장**: `tsx` 또는 `ts-node`로 소스 직접 실행
 
-### 🟡 Python
+### 🐍 Python
 ```bash
-# 빌드
 openseal build --exec "python main.py" --output dist_opensealed
-
-# 실행 (필요 시 venv 활성화)
-openseal run --app dist_opensealed --port 3000
+openseal run --app dist_opensealed --port 8000
 ```
+> 💡 **가상환경**: `venv`, `.venv` 자동 감지
 
 ### 🔵 Go
 ```bash
-# 빌드
-openseal build --exec "go run main.go" --output dist_opensealed
-
-# 실행
-openseal run --app dist_opensealed --port 3000
+go build -o app
+openseal build --exec "./app" --output dist_opensealed
+openseal run --app dist_opensealed --port 8080
 ```
 
 ### 🦀 Rust
 ```bash
-# 빌드 (target 폴더는 자동으로 무시됩니다)
-openseal build --exec "cargo run --release" --output dist_opensealed
-
-# 실행
-openseal run --app dist_opensealed --port 3000
+cargo build --release
+openseal build --exec "./target/release/myapp" --output dist_opensealed
+openseal run --app dist_opensealed --port 8000
 ```
 
-### 4단계: 검증 (선택사항 - 테스트용)
+---
+
+## 3. 주요 옵션
+
+| 옵션 | 설명 | 예시 |
+|------|------|------|
+| `--exec` | 봉인된 환경에서 실행할 명령어 | `npm run dev`, `python app.py` |
+| `--output` | 봉인된 파일이 저장될 폴더 | `dist_opensealed` |
+| `--daemon` | 백그라운드 실행 (프로덕션) | - |
+
+---
+
+## 4. 표준 Identity 엔드포인트
+
+모든 OpenSeal 서비스는 자동으로 `/.openseal/identity` 엔드포인트를 노출합니다.
+
 ```bash
-# API 응답의 무결성을 검증합니다.
-openseal verify --response result.json --wax "난수값" --root-hash "예상-A-hash"
+curl http://localhost:3000/.openseal/identity
 ```
 
-**`result.json` 파일 형식:**
-OpenSeal 런타임이 생성한 응답 파일은 다음과 같은 구조를 가집니다:
+**응답**:
 ```json
 {
-  "result": { /* 실제 API 응답 결과 */ },
+  "service": "OpenSeal Runtime Identity",
+  "version": "0.2.6",
+  "identity": {
+    "a_hash": "14f38520...",
+    "file_count": 1630
+  },
+  "status": "sealed"
+}
+```
+
+이를 통해 **HighStation** 등 외부 도구가 앱 코드 수정 없이 실시간 무결성을 검증할 수 있습니다.
+
+---
+
+## 5. Runtime 무결성 검증 (v0.2.6+)
+
+OpenSeal Runtime은 시작 시 봉인된 번들의 무결성을 자동으로 검증합니다.
+
+**동작 방식**:
+1. `dist_opensealed/` 스캔하여 Live Hash 계산
+2. `openseal.json`의 Expected Hash와 비교
+3. **변조 감지 시 → Runtime 중단**
+
+**정상 케이스**:
+```bash
+$ openseal run --app dist_opensealed --port 3000
+   ✅ Live A-hash: 14f38520...
+   ✅ Integrity Verified!
+   🚀 OpenSeal Running
+```
+
+**변조 케이스**:
+```bash
+$ openseal run --app dist_opensealed --port 3000
+   🚨 INTEGRITY VIOLATION DETECTED
+   Expected: 14f38520...
+   Actual:   XXXXXXXX...
+   Error: Runtime aborted
+```
+
+---
+
+## 6. openseal verify (검증 도구)
+
+API 응답의 무결성을 검증합니다.
+
+```bash
+openseal verify --response result.json --wax "난수값" --root-hash "14f38520..."
+```
+
+**result.json 형식**:
+```json
+{
+  "result": { "symbol": "BTC", "price": "98500" },
   "openseal": {
-    "signature": "...",  // 서명
-    "pub_key": "...",    // 공개키
-    "a_hash": "...",     // 코드 정체성
-    "b_hash": "..."      // 결과 바인딩
+    "signature": "...",
+    "pub_key": "...",
+    "a_hash": "...",
+    "b_hash": "..."
   }
 }
 ```
 
-**검증 내용:**
-- ✅ **서명 검증**: `openseal.signature`가 `pub_key`로 검증 가능한지 확인
-- ✅ **Wax 일치**: 응답에 포함된 Wax가 요청 시 보낸 난수와 일치하는지 확인
-- ✅ **코드 정체성**: (--root-hash 제공 시) `a_hash`가 예상 코드와 일치하는지 확인
-
-**`verify` 명령어를 사용하는 경우:**
-- 배포 전 로컬에서 봉인된 애플리케이션 테스트
-- API 응답에 유효한 인감(Seal)이 포함되어 있는지 감사
-- 인감 생성 문제 디버깅
-
-**참고**: 프로덕션 환경에서는 공급자가 아닌 클라이언트(소비자)가 오픈소스 검증기를 사용하여 검증합니다.
+**검증 내용**:
+- ✅ **서명 검증**: Ed25519 서명 유효성
+- ✅ **Binding 검증**: B-hash 일치 여부
+- ✅ **Identity 검증**: A-hash 일치 여부 (--root-hash 제공 시)
 
 ---
 
-## 2. 안전 가드레일 (Safety Guardrails)
+## 7. 안전 가드레일
 
-OpenSeal은 홈 디렉토리(`/home`) 등 의도치 않은 위치를 봉인하는 것을 방지합니다.
+OpenSeal은 의도치 않은 위치 봉인을 방지합니다.
 
-### 프로젝트 자동 탐지
-CLI는 프로젝트 표준 파일(`package.json`, `Cargo.toml`, `.git` 등)이 있는지 확인합니다. 파일이 없으면 진행 여부를 묻습니다:
-> `⚠️ WARNING: 표준 프로젝트 파일이 탐지되지 않았습니다. 진행할까요? (y/N)`
+**프로젝트 자동 탐지**:
+- `package.json`, `Cargo.toml`, `.git` 등 확인
+- 파일이 없으면 경고 후 확인 요청
 
-### 권장 사항
-- **루트 실행**: 반드시 소스 코드의 최상위 디렉토리에서 명령어를 실행하세요.
-- **무시 목록 확인**: `.opensealignore`를 사용하여 `node_modules`와 같은 대용량 폴더를 제외하세요.
+**권장 사항**:
+- ✅ 프로젝트 루트에서 실행
+- ✅ `.opensealignore`로 불필요한 파일 제외
 
 ---
 
-## 3. 제외 규칙
-- **.opensealignore**: A-hash 계산에서 완전히 제외 (코드 프라이버시).
-- **.openseal_mutable**: 파일의 존재는 봉인하되 내용은 변경 가능 (예: 로그, DB).
+## 8. 제외 규칙
+
+**`.opensealignore`**:
+- A-hash 계산에서 완전히 제외
+- 예: `node_modules/`, `venv/`, `.git/`
+
+**`.openseal_mutable`**:
+- 파일 존재는 봉인, 내용 변경 허용
+- 예: `*.db`, `logs/`, `cache/`
+
+---
+
+## 📚 추가 문서
+
+- [프로토콜 사양 (PROTOCOL)](./PROTOCOL_KR.md)
+- [언어 독립성 (AGNOSTICISM)](./AGNOSTICISM_KR.md)
+- [보안 정책 (POLICY)](./POLICY_KR.md)
