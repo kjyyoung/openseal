@@ -2,7 +2,7 @@
 set -e
 
 # Configuration
-REPO="Gnomone/openseal"
+REPO="kjyyoung/openseal"
 BINARY_NAME="openseal-linux"
 DOWNLOAD_URL="https://github.com/$REPO/releases/latest/download/$BINARY_NAME"
 
